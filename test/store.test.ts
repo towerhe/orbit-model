@@ -1,14 +1,14 @@
-import Coordinator, { EventLoggingStrategy, RequestStrategy, SyncStrategy } from '@orbit/coordinator';
-import JSONAPISource, { Resource } from '@orbit/jsonapi';
+import Coordinator, { RequestStrategy, SyncStrategy } from '@orbit/coordinator';
+import JSONAPISource, { Resource, ResourceDocument } from '@orbit/jsonapi';
 import MemorySource from '@orbit/memory';
 import { RecordKeyMap, RecordSchema } from '@orbit/records';
+import 'isomorphic-fetch';
 import * as sinon from 'sinon';
 import { SinonStub } from 'sinon';
 import { initialize } from '../src/factories/schema-factory';
 import Store from '../src/store';
 import { jsonapiResponse } from './setup/jsonapi';
-import Planet from './setup/planet';
-import 'isomorphic-fetch';
+import { Moon, Planet } from './setup/models';
 
 describe('Store', () => {
     let fetchStub: SinonStub;
@@ -25,7 +25,10 @@ describe('Store', () => {
         schema = initialize({
             // @ts-ignore
             planet: Planet,
+            // @ts-ignore
+            moon: Moon
         });
+
         keyMap = new RecordKeyMap();
         memory = new MemorySource({
             schema,
@@ -38,7 +41,7 @@ describe('Store', () => {
         coordinator = new Coordinator({
             sources: [memory, jsonapi],
         });
-        coordinator.addStrategy(new EventLoggingStrategy());
+        // coordinator.addStrategy(new EventLoggingStrategy());
         // Query the remote server whenever the memory source is queried
         coordinator.addStrategy(
             new RequestStrategy({
@@ -92,8 +95,42 @@ describe('Store', () => {
         };
 
         fetchStub.withArgs('/planets/12345').returns(jsonapiResponse(200, { data }));
+
         let result = await store.findRecord({ type: 'planet', key: 'remoteId', value: '12345' });
 
         expect(result?.$getAttribute('name')).toEqual('Jupiter');
+    });
+
+    test('#findRecord - can get the related record responsed by a compound document', async () => {
+        const doc: ResourceDocument = {
+            data: {
+                id: 'moon',
+                type: 'moon',
+                attributes: { name: 'Moon' },
+                relationships: {
+                    planet: { data: { id: 'earth', type: 'planet' } },
+                },
+            },
+            included: [
+                {
+                    type: 'planet',
+                    id: 'earth',
+                    attributes: {
+                        name: 'Earth',
+                    },
+                },
+            ],
+        };
+
+        fetchStub.withArgs('/moons/moon').returns(jsonapiResponse(200, doc));
+
+        let moon = await store.findRecord({ type: 'moon', key: 'remoteId', value: 'moon' });
+
+        expect(moon).not.toBeNull();
+
+        let earth = moon?.$getRelatedRecord('planet');
+
+        expect(earth).not.toBeNull();
+        expect(earth?.$getAttribute('name')).toEqual('Earth');
     });
 });
